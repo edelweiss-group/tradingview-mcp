@@ -7,9 +7,13 @@ from typing_extensions import TypedDict
 from mcp.server.fastmcp import FastMCP
 
 # Import bollinger band screener modules
-from tradingview_mcp.core.services.indicators import compute_metrics
+from tradingview_mcp.core.services.indicators import (
+    compute_metrics, extract_extended_indicators, analyze_timeframe_context,
+    compute_stock_score, compute_trade_setup, compute_trade_quality,
+    compute_fibonacci_levels, analyze_fibonacci_position, detect_trend_for_fibonacci,
+)
 from tradingview_mcp.core.services.coinlist import load_symbols
-from tradingview_mcp.core.utils.validators import sanitize_timeframe, sanitize_exchange, EXCHANGE_SCREENER, ALLOWED_TIMEFRAMES
+from tradingview_mcp.core.utils.validators import sanitize_timeframe, sanitize_exchange, EXCHANGE_SCREENER, ALLOWED_TIMEFRAMES, STOCK_EXCHANGES, is_stock_exchange, get_market_type
 
 try:
     from tradingview_ta import TA_Handler, get_multiple_analysis
@@ -235,7 +239,8 @@ def _fetch_multi_changes(exchange: str, timeframes: List[str] | None, base_timef
 			cols.append(c)
 			seen.add(c)
 
-	q = Query().set_markets("crypto").select(*cols)
+	market = get_market_type(exchange) if exchange else "crypto"
+	q = Query().set_markets(market).select(*cols)
 	if exchange:
 		q = q.where(Column("exchange") == exchange.upper())
 	if limit:
@@ -266,17 +271,22 @@ def _fetch_multi_changes(exchange: str, timeframes: List[str] | None, base_timef
 
 
 mcp = FastMCP(
-	name="TradingView Screener",
-	instructions=("Crypto screener utilities backed by TradingView Screener. Tools: top_gainers, top_losers, multi_changes."),
+	name="TradingView Multi-Market Screener",
+	instructions=(
+		"Multi-market screener backed by TradingView. "
+		"Supports crypto exchanges (KuCoin, Binance, Bybit, etc.) and stock markets (EGX, BIST, NASDAQ, NYSE, Bursa Malaysia, HKEX). "
+		"Tools: top_gainers, top_losers, bollinger_scan, coin_analysis, multi_agent_analysis, "
+		"volume_breakout_scanner, egx_market_overview, egx_sector_scan, and more."
+	),
 )
 
 
 @mcp.tool()
 def top_gainers(exchange: str = "KUCOIN", timeframe: str = "15m", limit: int = 25) -> list[dict]:
     """Return top gainers for an exchange and timeframe using bollinger band analysis.
-    
+
     Args:
-        exchange: Exchange name like KUCOIN, BINANCE, BYBIT, etc.
+        exchange: Exchange name - crypto: KUCOIN, BINANCE, BYBIT; stocks: EGX, BIST, NASDAQ, NYSE, BURSA, HKEX
         timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M
         limit: Number of rows to return (max 50)
     """
@@ -295,7 +305,7 @@ def top_gainers(exchange: str = "KUCOIN", timeframe: str = "15m", limit: int = 2
 
 @mcp.tool()
 def top_losers(exchange: str = "KUCOIN", timeframe: str = "15m", limit: int = 25) -> list[dict]:
-    """Return top losers for an exchange and timeframe using bollinger band analysis."""
+    """Return top losers for an exchange and timeframe. Supports crypto (KUCOIN, BINANCE) and stocks (EGX, BIST, NASDAQ)."""
     exchange = sanitize_exchange(exchange, "KUCOIN")
     timeframe = sanitize_timeframe(timeframe, "15m")
     limit = max(1, min(limit, 50))
@@ -314,11 +324,11 @@ def top_losers(exchange: str = "KUCOIN", timeframe: str = "15m", limit: int = 25
 
 @mcp.tool()
 def bollinger_scan(exchange: str = "KUCOIN", timeframe: str = "4h", bbw_threshold: float = 0.04, limit: int = 50) -> list[dict]:
-    """Scan for coins with low Bollinger Band Width (squeeze detection).
-    
+    """Scan for assets with low Bollinger Band Width (squeeze detection). Works with crypto and stocks (EGX, BIST, etc.).
+
     Args:
-        exchange: Exchange name like KUCOIN, BINANCE, BYBIT, etc.
-        timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M  
+        exchange: Exchange - crypto: KUCOIN, BINANCE, BYBIT; stocks: EGX, BIST, NASDAQ, NYSE, BURSA, HKEX
+        timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M
         bbw_threshold: Maximum BBW value to filter (default 0.04)
         limit: Number of rows to return (max 100)
     """
@@ -364,15 +374,15 @@ def coin_analysis(
     exchange: str = "KUCOIN",
     timeframe: str = "15m"
 ) -> dict:
-    """Get detailed analysis for a specific coin on specified exchange and timeframe.
-    
+    """Get detailed analysis for a specific asset (coin or stock) on specified exchange and timeframe.
+
     Args:
-        symbol: Coin symbol (e.g., "ACEUSDT", "BTCUSDT")
-        exchange: Exchange name (BINANCE, KUCOIN, etc.) 
+        symbol: Symbol - crypto: "BTCUSDT", "ETHUSDT"; stocks: "COMI" (EGX), "THYAO" (BIST)
+        exchange: Exchange - crypto: KUCOIN, BINANCE; stocks: EGX, BIST, NASDAQ, NYSE, BURSA, HKEX
         timeframe: Time interval (5m, 15m, 1h, 4h, 1D, 1W, 1M)
-    
+
     Returns:
-        Detailed coin analysis with all indicators and metrics
+        Detailed analysis with all indicators and metrics
     """
     try:
         exchange = sanitize_exchange(exchange, "KUCOIN")
@@ -414,22 +424,47 @@ def coin_analysis(
                     "timeframe": timeframe
                 }
             
-            # Additional technical indicators
-            macd = indicators.get("MACD.macd", 0)
-            macd_signal = indicators.get("MACD.signal", 0)
-            adx = indicators.get("ADX", 0)
-            stoch_k = indicators.get("Stoch.K", 0)
-            stoch_d = indicators.get("Stoch.D", 0)
-            
-            # Volume analysis
-            volume = indicators.get("volume", 0)
-            
             # Price levels
+            volume = indicators.get("volume", 0)
             high = indicators.get("high", 0)
             low = indicators.get("low", 0)
             open_price = indicators.get("open", 0)
             close_price = indicators.get("close", 0)
-            
+
+            # Extended indicators (RSI, OBV, SMA, EMA, ATR, MACD, Volume, BB, S/R, Structure)
+            extended = extract_extended_indicators(indicators)
+
+            # Timeframe-specific context and advice
+            tf_context = analyze_timeframe_context(indicators, timeframe)
+
+            # --- Trade Setup for Stock Exchanges ---
+            trade_data = {}
+            if is_stock_exchange(exchange):
+                score_result = compute_stock_score(indicators)
+                if score_result:
+                    trade_data["stock_score"] = score_result["score"]
+                    trade_data["grade"] = score_result["grade"]
+                    trade_data["trend_state"] = score_result["trend_state"]
+
+                    setup = compute_trade_setup(indicators)
+                    if setup:
+                        trade_data["trade_setup"] = {
+                            "setup_types": setup["setup_types"],
+                            "entry_points": setup["entry_points"],
+                            "stop_loss": setup["stop_loss"],
+                            "stop_distance_pct": setup["stop_distance_pct"],
+                            "targets": setup["targets"],
+                            "risk_reward": setup["risk_reward"],
+                            "supports": setup["supports"],
+                            "resistances": setup["resistances"],
+                        }
+
+                        quality = compute_trade_quality(indicators, score_result["score"], setup)
+                        if quality:
+                            trade_data["trade_quality_score"] = quality["trade_quality_score"]
+                            trade_data["trade_quality"] = quality["quality"]
+                            trade_data["trade_notes"] = quality["notes"]
+
             return {
                 "symbol": full_symbol,
                 "exchange": exchange,
@@ -444,38 +479,29 @@ def coin_analysis(
                     "change_percent": metrics['change'],
                     "volume": volume
                 },
-                "bollinger_analysis": {
-                    "rating": metrics['rating'],
-                    "signal": metrics['signal'],
-                    "bbw": metrics['bbw'],
-                    "bb_upper": round(indicators.get("BB.upper", 0), 6),
-                    "bb_middle": round(indicators.get("SMA20", 0), 6),
-                    "bb_lower": round(indicators.get("BB.lower", 0), 6),
-                    "position": "Above Upper" if close_price > indicators.get("BB.upper", 0) else 
-                               "Below Lower" if close_price < indicators.get("BB.lower", 0) else 
-                               "Within Bands"
-                },
-                "technical_indicators": {
-                    "rsi": round(indicators.get("RSI", 0), 2),
-                    "rsi_signal": "Overbought" if indicators.get("RSI", 0) > 70 else
-                                 "Oversold" if indicators.get("RSI", 0) < 30 else "Neutral",
-                    "sma20": round(indicators.get("SMA20", 0), 6),
-                    "ema50": round(indicators.get("EMA50", 0), 6),
-                    "ema200": round(indicators.get("EMA200", 0), 6),
-                    "macd": round(macd, 6),
-                    "macd_signal": round(macd_signal, 6),
-                    "macd_divergence": round(macd - macd_signal, 6),
-                    "adx": round(adx, 2),
-                    "trend_strength": "Strong" if adx > 25 else "Weak",
-                    "stoch_k": round(stoch_k, 2),
-                    "stoch_d": round(stoch_d, 2)
-                },
+                "timeframe_context": tf_context,
+                "rsi": extended["rsi"],
+                "macd": extended["macd"],
+                "sma": extended["sma"],
+                "ema": extended["ema"],
+                "bollinger_bands": extended["bollinger_bands"],
+                "atr": extended["atr"],
+                "volume_analysis": extended["volume"],
+                "obv": extended["obv"],
+                "support_resistance": extended["support_resistance"],
+                "stochastic": extended["stochastic"],
+                "adx": extended["adx"],
+                "market_structure": extended["market_structure"],
+                **({
+                    "vwap": extended["vwap"]
+                } if "vwap" in extended else {}),
                 "market_sentiment": {
                     "overall_rating": metrics['rating'],
                     "buy_sell_signal": metrics['signal'],
-                    "volatility": "High" if metrics['bbw'] > 0.05 else "Medium" if metrics['bbw'] > 0.02 else "Low",
+                    "volatility": "High" if metrics['bbw'] and metrics['bbw'] > 0.05 else "Medium" if metrics['bbw'] and metrics['bbw'] > 0.02 else "Low",
                     "momentum": "Bullish" if metrics['change'] > 0 else "Bearish"
-                }
+                },
+                **trade_data,
             }
             
         except Exception as e:
@@ -893,7 +919,8 @@ def _fetch_multi_timeframe_patterns(exchange: str, symbols: List[str], base_tf: 
             "RSI"
         ]
         
-        q = Query().set_markets("crypto").select(*cols)
+        market = get_market_type(exchange)
+        q = Query().set_markets(market).select(*cols)
         q = q.where(Column("exchange") == exchange.upper())
         q = q.limit(len(symbols))
         
@@ -968,9 +995,9 @@ def exchanges_list() -> str:
                 return f"Available exchanges: {', '.join(sorted(exchanges))}"
         
         # Fallback to static list
-        return "Common exchanges: KUCOIN, BINANCE, BYBIT, BITGET, OKX, COINBASE, GATEIO, HUOBI, BITFINEX, KRAKEN, BITSTAMP, BIST, NASDAQ"
+        return "Common exchanges: KUCOIN, BINANCE, BYBIT, BITGET, OKX, COINBASE, GATEIO, HUOBI, BITFINEX, KRAKEN, BITSTAMP, BIST, EGX, NASDAQ"
     except Exception:
-        return "Common exchanges: KUCOIN, BINANCE, BYBIT, BITGET, OKX, COINBASE, GATEIO, HUOBI, BITFINEX, KRAKEN, BITSTAMP, BIST, NASDAQ"
+        return "Common exchanges: KUCOIN, BINANCE, BYBIT, BITGET, OKX, COINBASE, GATEIO, HUOBI, BITFINEX, KRAKEN, BITSTAMP, BIST, EGX, NASDAQ"
 def main() -> None:
 	parser = argparse.ArgumentParser(description="TradingView Screener MCP server")
 	parser.add_argument("transport", choices=["stdio", "streamable-http"], default="stdio", nargs="?", help="Transport (default stdio)")
@@ -1104,21 +1131,30 @@ def volume_confirmation_analysis(symbol: str, exchange: str = "KUCOIN", timefram
 	"""
 	exchange = sanitize_exchange(exchange, "KUCOIN")
 	timeframe = sanitize_timeframe(timeframe, "15m")
-	
-	if not symbol.upper().endswith('USDT'):
+
+	# Only append USDT for crypto exchanges, not stock markets
+	if not is_stock_exchange(exchange) and not symbol.upper().endswith('USDT'):
 		symbol = symbol.upper() + 'USDT'
-	
+	else:
+		symbol = symbol.upper()
+
+	# Format with exchange prefix for stock markets
+	if is_stock_exchange(exchange) and ":" not in symbol:
+		full_symbol = f"{exchange.upper()}:{symbol}"
+	else:
+		full_symbol = symbol
+
 	screener = EXCHANGE_SCREENER.get(exchange, "crypto")
-	
+
 	try:
-		analysis = get_multiple_analysis(screener=screener, interval=timeframe, symbols=[symbol])
-		
-		if not analysis or symbol not in analysis:
-			return {"error": f"No data found for {symbol}"}
+		analysis = get_multiple_analysis(screener=screener, interval=timeframe, symbols=[full_symbol])
+
+		if not analysis or full_symbol not in analysis:
+			return {"error": f"No data found for {full_symbol}"}
 			
-		data = analysis[symbol]
+		data = analysis[full_symbol]
 		if not data or not hasattr(data, 'indicators'):
-			return {"error": f"No indicator data for {symbol}"}
+			return {"error": f"No indicator data for {full_symbol}"}
 			
 		indicators = data.indicators
 		
@@ -1351,10 +1387,10 @@ def multi_agent_analysis(
     timeframe: str = "15m"
 ) -> dict:
     """Run a multi-agent debate (Technical, Sentiment, Risk) for a specific symbol.
-    
+
     Args:
-        symbol: Coin symbol (e.g., "BTCUSDT")
-        exchange: Exchange name (BINANCE, KUCOIN, etc.) 
+        symbol: Symbol - crypto: "BTCUSDT"; stocks: "COMI" (EGX), "THYAO" (BIST)
+        exchange: Exchange - crypto: KUCOIN, BINANCE; stocks: EGX, BIST, NASDAQ, NYSE
         timeframe: Time interval (5m, 15m, 1h, 4h, 1D, 1W)
     
     Returns:
@@ -1458,6 +1494,1394 @@ def multi_agent_analysis(
         
     except Exception as e:
         return {"error": f"Multi-agent analysis failed: {str(e)}"}
+
+
+@mcp.tool()
+def egx_market_overview(timeframe: str = "1D", limit: int = 10) -> dict:
+    """Get a comprehensive overview of the Egyptian Exchange (EGX) market.
+
+    Shows top gainers, top losers, and most active stocks on EGX.
+
+    Args:
+        timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M (default 1D for stocks)
+        limit: Number of stocks per category (max 20)
+    """
+    if not TRADINGVIEW_TA_AVAILABLE:
+        return {"error": "tradingview_ta is missing; run `uv sync`."}
+
+    timeframe = sanitize_timeframe(timeframe, "1D")
+    limit = max(1, min(limit, 20))
+
+    symbols = load_symbols("egx")
+    if not symbols:
+        return {"error": "No EGX symbols found. Check coinlist/egx.txt"}
+
+    screener = EXCHANGE_SCREENER.get("egx", "egypt")
+
+    all_stocks = []
+    batch_size = 200
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i + batch_size]
+        try:
+            analysis = get_multiple_analysis(screener=screener, interval=timeframe, symbols=batch)
+        except Exception:
+            continue
+
+        for sym, data in analysis.items():
+            if data is None:
+                continue
+            try:
+                indicators = data.indicators
+                metrics = compute_metrics(indicators)
+                if not metrics:
+                    continue
+
+                volume = indicators.get("volume", 0)
+                all_stocks.append({
+                    "symbol": sym,
+                    "price": metrics.get("price", 0),
+                    "changePercent": metrics.get("change", 0),
+                    "volume": volume,
+                    "rsi": round(indicators.get("RSI", 0) or 0, 2),
+                    "bbw": metrics.get("bbw", 0),
+                    "rating": metrics.get("rating", 0),
+                    "signal": metrics.get("signal", "N/A"),
+                })
+            except Exception:
+                continue
+
+    if not all_stocks:
+        return {"error": "No data returned for EGX stocks", "timeframe": timeframe}
+
+    # Sort for different views
+    by_change = sorted(all_stocks, key=lambda x: x["changePercent"], reverse=True)
+    by_volume = sorted(all_stocks, key=lambda x: x["volume"] or 0, reverse=True)
+
+    return {
+        "exchange": "EGX",
+        "timeframe": timeframe,
+        "total_analyzed": len(all_stocks),
+        "top_gainers": by_change[:limit],
+        "top_losers": by_change[-limit:][::-1],
+        "most_active": by_volume[:limit],
+        "market_stats": {
+            "advancing": len([s for s in all_stocks if s["changePercent"] > 0]),
+            "declining": len([s for s in all_stocks if s["changePercent"] < 0]),
+            "unchanged": len([s for s in all_stocks if s["changePercent"] == 0]),
+            "avg_change": round(sum(s["changePercent"] for s in all_stocks) / len(all_stocks), 2) if all_stocks else 0,
+        }
+    }
+
+
+@mcp.tool()
+def egx_sector_scan(
+    sector: str = "",
+    timeframe: str = "1D",
+    limit: int = 20
+) -> dict:
+    """Scan EGX stocks by sector. Shows available sectors if none specified.
+
+    Args:
+        sector: Sector name - banks, basic_resources, healthcare_and_pharma,
+                industrial_goods_and_services, real_estate, travel_and_leisure, utilities,
+                it_media_and_communication, food_beverages_and_tobacco,
+                energy_and_support_services, trade_and_distributors,
+                shipping_and_transportation, education_services,
+                non_bank_financial_services, contracting_and_construction,
+                textiles_and_durables, building_materials, paper_and_packaging.
+                Leave empty to list all sectors.
+        timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M
+        limit: Max results per sector (max 50)
+    """
+    from tradingview_mcp.core.data.egx_sectors import get_all_sectors, get_symbols_by_sector, get_sector
+
+    if not sector:
+        sectors = get_all_sectors()
+        return {
+            "available_sectors": sectors,
+            "usage": "Pass a sector name to scan. Example: sector='banks'"
+        }
+
+    if not TRADINGVIEW_TA_AVAILABLE:
+        return {"error": "tradingview_ta is missing; run `uv sync`."}
+
+    timeframe = sanitize_timeframe(timeframe, "1D")
+    limit = max(1, min(limit, 50))
+
+    sector_key = sector.strip().lower().replace(" ", "_")
+    symbols = get_symbols_by_sector(sector_key)
+
+    if not symbols:
+        return {
+            "error": f"Unknown sector: {sector}",
+            "available_sectors": get_all_sectors()
+        }
+
+    screener = EXCHANGE_SCREENER.get("egx", "egypt")
+
+    try:
+        analysis = get_multiple_analysis(screener=screener, interval=timeframe, symbols=symbols)
+    except Exception as e:
+        return {"error": f"Analysis failed: {str(e)}"}
+
+    results = []
+    for sym, data in analysis.items():
+        if data is None:
+            continue
+        try:
+            indicators = data.indicators
+            metrics = compute_metrics(indicators)
+            if not metrics:
+                continue
+
+            results.append({
+                "symbol": sym,
+                "sector": get_sector(sym),
+                "price": metrics.get("price", 0),
+                "changePercent": metrics.get("change", 0),
+                "volume": indicators.get("volume", 0),
+                "rsi": round(indicators.get("RSI", 0) or 0, 2),
+                "bbw": metrics.get("bbw", 0),
+                "rating": metrics.get("rating", 0),
+                "signal": metrics.get("signal", "N/A"),
+                "bb_upper": round(indicators.get("BB.upper", 0) or 0, 4),
+                "bb_lower": round(indicators.get("BB.lower", 0) or 0, 4),
+                "sma20": round(indicators.get("SMA20", 0) or 0, 4),
+                "ema50": round(indicators.get("EMA50", 0) or 0, 4),
+            })
+        except Exception:
+            continue
+
+    results.sort(key=lambda x: x["changePercent"], reverse=True)
+
+    sector_change = [r["changePercent"] for r in results if r["changePercent"] is not None]
+    avg_change = round(sum(sector_change) / len(sector_change), 2) if sector_change else 0
+
+    return {
+        "exchange": "EGX",
+        "sector": sector_key,
+        "timeframe": timeframe,
+        "total_stocks": len(results),
+        "sector_avg_change": avg_change,
+        "sector_sentiment": "Bullish" if avg_change > 0.5 else "Bearish" if avg_change < -0.5 else "Neutral",
+        "data": results[:limit],
+    }
+
+
+# ── Sector scanner helpers ───────────────────────────────────────────────────
+
+def _compute_sector_momentum_score(
+    avg_change: float,
+    avg_rsi: float,
+    breadth_pct: float,
+    volume_flow_positive: bool,
+    change_rank_pct: float,
+) -> int:
+    """Compute a 0-100 sector momentum score.
+
+    Components:
+        - Change rank among sectors (0-30 pts)
+        - RSI in optimal zone 50-70 (0-25 pts)
+        - Breadth percentage (0-25 pts)
+        - Volume flow direction (0-20 pts)
+    """
+    # Change rank: 0-30 pts based on percentile rank among sectors
+    change_pts = round(change_rank_pct * 30)
+
+    # RSI zone: 50-70 is optimal (25 pts), degrades outside
+    if 50 <= avg_rsi <= 70:
+        rsi_pts = 25
+    elif 40 <= avg_rsi < 50 or 70 < avg_rsi <= 80:
+        rsi_pts = 15
+    elif 30 <= avg_rsi < 40:
+        rsi_pts = 10  # Oversold — potential recovery
+    elif avg_rsi > 80:
+        rsi_pts = 5   # Overbought — risk of pullback
+    else:
+        rsi_pts = 8   # Deep oversold
+
+    # Breadth: 0-25 pts linearly
+    breadth_pts = round(min(breadth_pct, 100) / 100 * 25)
+
+    # Volume flow: binary 0 or 20
+    volume_pts = 20 if volume_flow_positive else 0
+
+    return max(0, min(100, change_pts + rsi_pts + breadth_pts + volume_pts))
+
+
+def _generate_rotation_signals(ranked_sectors: list) -> List[str]:
+    """Generate human-readable sector rotation signals from ranked heatmap."""
+    signals = []
+    for s in ranked_sectors:
+        if s["status"] == "Hot":
+            signals.append(
+                f"Money rotating INTO {s['display_name']} "
+                f"(Hot, {s['avg_change_pct']:+.2f}% avg, "
+                f"{s['volume_flow']['signal'].lower()}, "
+                f"weight {s['market_cap_weight']}%)"
+            )
+        elif s["status"] == "Cold":
+            signals.append(
+                f"Money rotating OUT OF {s['display_name']} "
+                f"(Cold, {s['avg_change_pct']:+.2f}% avg, "
+                f"{s['volume_flow']['signal'].lower()}, "
+                f"weight {s['market_cap_weight']}%)"
+            )
+    return signals
+
+
+@mcp.tool()
+def egx_sector_scanner(
+    timeframe: str = "1D",
+    top_n_sectors: int = 5,
+    top_n_stocks: int = 3,
+    min_stock_score: int = 60,
+) -> dict:
+    """Sector rotation scanner for EGX — identifies hot/cold sectors and top picks.
+
+    Scans all 18 EGX sectors, ranks them by momentum, and surfaces the best
+    stocks in the top sectors with full trade setups.
+
+    Args:
+        timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M (default 1D)
+        top_n_sectors: Number of top sectors to show stock picks for (1-18, default 5)
+        top_n_stocks: Number of top stocks per highlighted sector (1-10, default 3)
+        min_stock_score: Minimum stock score for picks (0-100, default 60)
+
+    Returns:
+        Weighted market view, sector heatmap (all 18), top picks per sector,
+        and rotation signals showing money flow direction.
+    """
+    from tradingview_mcp.core.data.egx_sectors import (
+        EGX_SECTORS, EGX_SECTOR_META, SECTOR_DISPLAY_NAMES,
+        get_sector, get_currency,
+    )
+
+    if not TRADINGVIEW_TA_AVAILABLE:
+        return {"error": "tradingview_ta is missing; run `uv sync`."}
+
+    timeframe = sanitize_timeframe(timeframe, "1D")
+    top_n_sectors = max(1, min(18, top_n_sectors))
+    top_n_stocks = max(1, min(10, top_n_stocks))
+    min_stock_score = max(0, min(100, min_stock_score))
+
+    screener = EXCHANGE_SCREENER.get("egx", "egypt")
+
+    # ── Step A: Collect all sector symbols ──
+    sector_symbol_map: Dict[str, List[str]] = {}
+    all_symbols: List[str] = []
+    symbol_to_sectors: Dict[str, List[str]] = {}
+
+    for sector_key, sym_set in EGX_SECTORS.items():
+        prefixed = [f"EGX:{s}" for s in sorted(sym_set)]
+        sector_symbol_map[sector_key] = prefixed
+        for s in prefixed:
+            all_symbols.append(s)
+            symbol_to_sectors.setdefault(s, []).append(sector_key)
+
+    # Deduplicate for API calls (some symbols appear in multiple sectors)
+    unique_symbols = list(dict.fromkeys(all_symbols))
+
+    # ── Step B: Batch fetch TA data ──
+    raw_data: Dict[str, Any] = {}
+    batch_size = 200
+    for i in range(0, len(unique_symbols), batch_size):
+        batch = unique_symbols[i:i + batch_size]
+        try:
+            analysis = get_multiple_analysis(
+                screener=screener, interval=timeframe, symbols=batch
+            )
+            for sym, data in analysis.items():
+                if data is not None:
+                    try:
+                        ind = data.indicators
+                        o = ind.get("open")
+                        c = ind.get("close")
+                        if o and c and o > 0:
+                            change = ((c - o) / o) * 100
+                            raw_data[sym] = {"indicators": ind, "change": change}
+                    except Exception:
+                        continue
+        except Exception:
+            continue
+
+    if not raw_data:
+        return {"error": "No data returned for EGX stocks", "timeframe": timeframe}
+
+    # ── Step C: Cross-sectional percentile ranks ──
+    all_changes = sorted([d["change"] for d in raw_data.values()])
+    n_total = len(all_changes)
+
+    def _percentile_rank(val):
+        count_below = sum(1 for c in all_changes if c < val)
+        return count_below / n_total if n_total > 0 else 0.5
+
+    # ── Step D: Per-stock scoring ──
+    stock_scores: Dict[str, Dict[str, Any]] = {}
+    for sym, d in raw_data.items():
+        try:
+            pct_rank = _percentile_rank(d["change"])
+            ccy = get_currency(sym)
+            result = compute_stock_score(d["indicators"], change_pct_rank=pct_rank, currency=ccy)
+            if result:
+                stock_scores[sym] = {
+                    "score_result": result,
+                    "change": d["change"],
+                    "indicators": d["indicators"],
+                }
+        except Exception:
+            continue
+
+    # ── Step E: Sector aggregation ──
+    sector_agg: Dict[str, Dict[str, Any]] = {}
+
+    for sector_key, symbols in sector_symbol_map.items():
+        changes = []
+        rsis = []
+        scores = []
+        advancing = 0
+        declining = 0
+        net_volume_flow = 0.0
+        total_stocks = 0
+        sector_stock_data = []
+
+        for sym in symbols:
+            if sym not in raw_data:
+                continue
+            total_stocks += 1
+            d = raw_data[sym]
+            ind = d["indicators"]
+            chg = d["change"]
+            changes.append(chg)
+
+            if chg > 0:
+                advancing += 1
+            elif chg < 0:
+                declining += 1
+
+            rsi = ind.get("RSI")
+            if rsi is not None:
+                rsis.append(rsi)
+
+            vol = ind.get("volume", 0) or 0
+            vol_sma = ind.get("volume.SMA20", 0) or 0
+            net_volume_flow += vol - vol_sma
+
+            if sym in stock_scores:
+                sc = stock_scores[sym]
+                scores.append(sc["score_result"]["score"])
+                sector_stock_data.append({
+                    "symbol": sym,
+                    "score_result": sc["score_result"],
+                    "change": sc["change"],
+                    "indicators": sc["indicators"],
+                })
+
+        if total_stocks == 0:
+            sector_agg[sector_key] = {"status": "No Data", "total_stocks": 0}
+            continue
+
+        avg_change = round(sum(changes) / len(changes), 2) if changes else 0.0
+        avg_rsi = round(sum(rsis) / len(rsis), 2) if rsis else 50.0
+        avg_score = round(sum(scores) / len(scores), 1) if scores else 0.0
+        breadth_pct = round(advancing / total_stocks * 100, 1)
+
+        sector_agg[sector_key] = {
+            "avg_change": avg_change,
+            "avg_rsi": avg_rsi,
+            "avg_score": avg_score,
+            "advancing": advancing,
+            "declining": declining,
+            "total_stocks": total_stocks,
+            "breadth_pct": breadth_pct,
+            "net_volume_flow": net_volume_flow,
+            "volume_flow_positive": net_volume_flow > 0,
+            "stock_data": sector_stock_data,
+        }
+
+    # ── Step F: Sector ranking ──
+    # Compute change rank for each sector
+    valid_sectors = [k for k, v in sector_agg.items() if v.get("total_stocks", 0) > 0]
+    sorted_by_change = sorted(valid_sectors, key=lambda k: sector_agg[k]["avg_change"])
+    change_rank_map = {}
+    for i, k in enumerate(sorted_by_change):
+        change_rank_map[k] = i / len(sorted_by_change) if len(sorted_by_change) > 1 else 0.5
+
+    # Compute momentum scores
+    for sector_key in valid_sectors:
+        agg = sector_agg[sector_key]
+        momentum = _compute_sector_momentum_score(
+            avg_change=agg["avg_change"],
+            avg_rsi=agg["avg_rsi"],
+            breadth_pct=agg["breadth_pct"],
+            volume_flow_positive=agg["volume_flow_positive"],
+            change_rank_pct=change_rank_map.get(sector_key, 0.5),
+        )
+        agg["momentum_score"] = momentum
+
+        # Classify
+        if momentum >= 65 and agg["volume_flow_positive"]:
+            agg["status"] = "Hot"
+        elif momentum >= 50 or (agg["avg_change"] > 0 and agg["breadth_pct"] > 50):
+            agg["status"] = "Warming"
+        elif momentum >= 35 and not agg["volume_flow_positive"]:
+            agg["status"] = "Cooling"
+        else:
+            agg["status"] = "Cold"
+
+    # Build heatmap sorted by momentum
+    heatmap = []
+    for sector_key in sorted(
+        valid_sectors,
+        key=lambda k: sector_agg[k].get("momentum_score", 0),
+        reverse=True,
+    ):
+        agg = sector_agg[sector_key]
+        meta = EGX_SECTOR_META.get(sector_key, {})
+        heatmap.append({
+            "sector": sector_key,
+            "display_name": SECTOR_DISPLAY_NAMES.get(sector_key, sector_key),
+            "market_cap_weight": meta.get("market_cap_weight", 0),
+            "status": agg["status"],
+            "momentum_score": agg.get("momentum_score", 0),
+            "avg_change_pct": agg["avg_change"],
+            "avg_rsi": agg["avg_rsi"],
+            "avg_stock_score": agg["avg_score"],
+            "breadth": {
+                "advancing": agg["advancing"],
+                "declining": agg["declining"],
+                "breadth_pct": agg["breadth_pct"],
+            },
+            "volume_flow": {
+                "net_flow": round(agg["net_volume_flow"]),
+                "signal": "Inflow" if agg["volume_flow_positive"] else "Outflow",
+            },
+            "stocks_analyzed": agg["total_stocks"],
+        })
+
+    # Add sectors with no data at the end
+    for sector_key in EGX_SECTORS:
+        if sector_key not in valid_sectors:
+            meta = EGX_SECTOR_META.get(sector_key, {})
+            heatmap.append({
+                "sector": sector_key,
+                "display_name": SECTOR_DISPLAY_NAMES.get(sector_key, sector_key),
+                "market_cap_weight": meta.get("market_cap_weight", 0),
+                "status": "No Data",
+                "momentum_score": 0,
+                "avg_change_pct": 0,
+                "avg_rsi": 0,
+                "avg_stock_score": 0,
+                "breadth": {"advancing": 0, "declining": 0, "breadth_pct": 0},
+                "volume_flow": {"net_flow": 0, "signal": "N/A"},
+                "stocks_analyzed": 0,
+            })
+
+    # ── Step G: Weighted market view ──
+    weighted_change = 0.0
+    weighted_rsi = 0.0
+    weighted_momentum = 0.0
+    total_weight = 0.0
+
+    for sector_key in valid_sectors:
+        agg = sector_agg[sector_key]
+        weight = EGX_SECTOR_META.get(sector_key, {}).get("market_cap_weight", 0)
+        weighted_change += agg["avg_change"] * weight
+        weighted_rsi += agg["avg_rsi"] * weight
+        weighted_momentum += agg.get("momentum_score", 0) * weight
+        total_weight += weight
+
+    if total_weight > 0:
+        weighted_change = round(weighted_change / total_weight, 2)
+        weighted_rsi = round(weighted_rsi / total_weight, 2)
+        weighted_momentum = round(weighted_momentum / total_weight, 1)
+    else:
+        weighted_change = weighted_rsi = weighted_momentum = 0
+
+    if weighted_change > 0.5:
+        market_sentiment = "Bullish"
+    elif weighted_change < -0.5:
+        market_sentiment = "Bearish"
+    else:
+        market_sentiment = "Neutral"
+
+    # ── Step H: Top picks per sector ──
+    top_sector_keys = [h["sector"] for h in heatmap[:top_n_sectors]
+                       if h["status"] != "No Data"]
+    sector_top_picks: Dict[str, list] = {}
+
+    for sector_key in top_sector_keys:
+        agg = sector_agg[sector_key]
+        candidates = agg.get("stock_data", [])
+        # Filter by min score and sort
+        qualified = [
+            c for c in candidates
+            if c["score_result"]["score"] >= min_stock_score
+        ]
+        qualified.sort(key=lambda x: x["score_result"]["score"], reverse=True)
+
+        picks = []
+        for c in qualified[:top_n_stocks]:
+            result = c["score_result"]
+            ind = c["indicators"]
+            metrics = compute_metrics(ind)
+            liq = result.get("liquidity", {})
+            currency = get_currency(c["symbol"])
+            entry = {
+                "symbol": c["symbol"],
+                "price": metrics["price"] if metrics else 0,
+                "currency": currency,
+                "stock_score": result["score"],
+                "grade": result["grade"],
+                "trend_state": result["trend_state"],
+                "change_pct": result["change_pct"],
+                "signals": result["signals"],
+                "penalties": result.get("penalties", []),
+                "liquidity": liq,
+            }
+            # Trade setup for stocks scoring 70+
+            if result["score"] >= 70:
+                setup = compute_trade_setup(ind)
+                if setup:
+                    quality = compute_trade_quality(ind, result["score"], setup)
+                    entry["trade_setup"] = {
+                        "setup_types": setup["setup_types"],
+                        "entry_points": setup["entry_points"],
+                        "stop_loss": setup["stop_loss"],
+                        "stop_distance_pct": setup["stop_distance_pct"],
+                        "targets": setup["targets"],
+                        "risk_reward": setup["risk_reward"],
+                        "supports": setup["supports"],
+                        "resistances": setup["resistances"],
+                    }
+                    entry["trade_quality_score"] = quality["trade_quality_score"]
+                    entry["trade_quality"] = quality["quality"]
+
+            picks.append(entry)
+
+        sector_top_picks[sector_key] = picks
+
+    # ── Step I: Rotation signals ──
+    rotation_signals = _generate_rotation_signals(heatmap)
+
+    return {
+        "exchange": "EGX",
+        "timeframe": timeframe,
+        "total_sectors": len(heatmap),
+        "total_stocks_scanned": len(raw_data),
+        "weighted_market_view": {
+            "weighted_change_pct": weighted_change,
+            "weighted_rsi": weighted_rsi,
+            "weighted_momentum": weighted_momentum,
+            "market_sentiment": market_sentiment,
+        },
+        "sector_heatmap": heatmap,
+        "sector_top_picks": sector_top_picks,
+        "rotation_signals": rotation_signals,
+        "disclaimer": "For educational/informational purposes only. Not financial advice.",
+    }
+
+
+@mcp.tool()
+def egx_index_analysis(
+    index: str = "EGX30",
+    timeframe: str = "1D",
+    limit: int = 30
+) -> dict:
+    """Analyze an EGX index showing constituent performance with full indicators.
+
+    Returns index-level statistics and per-stock breakdown.
+
+    Args:
+        index: Index name - EGX30 (blue chips), EGX70 (mid/small cap), EGX100 (broad),
+               SHARIAH33 (Shariah-compliant), EGX35LV (low volatility), TAMAYUZ (small/micro-cap)
+        timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M (default 1D)
+        limit: Number of stocks to show in detail (max 100)
+    """
+    from tradingview_mcp.core.data.egx_indices import EGX_INDICES, is_egx30_stock
+    from tradingview_mcp.core.data.egx_sectors import get_sector
+
+    if not TRADINGVIEW_TA_AVAILABLE:
+        return {"error": "tradingview_ta is missing; run `uv sync`."}
+
+    index_key = index.strip().upper()
+    if index_key not in EGX_INDICES:
+        return {
+            "error": f"Unknown index: {index}",
+            "available_indices": list(EGX_INDICES.keys()),
+            "usage": "Use EGX30, EGX70, or EGX100",
+        }
+
+    timeframe = sanitize_timeframe(timeframe, "1D")
+    limit = max(1, min(limit, 100))
+
+    index_info = EGX_INDICES[index_key]
+    symbols = index_info["get_symbols"]()
+    screener = EXCHANGE_SCREENER.get("egx", "egypt")
+
+    all_stocks = []
+    batch_size = 200
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i + batch_size]
+        try:
+            analysis = get_multiple_analysis(screener=screener, interval=timeframe, symbols=batch)
+        except Exception:
+            continue
+
+        for sym, data in analysis.items():
+            if data is None:
+                continue
+            try:
+                indicators = data.indicators
+                metrics = compute_metrics(indicators)
+                if not metrics:
+                    continue
+
+                extended = extract_extended_indicators(indicators)
+                volume = indicators.get("volume", 0)
+
+                stock_data = {
+                    "symbol": sym,
+                    "sector": get_sector(sym),
+                    "is_egx30": is_egx30_stock(sym),
+                    "price": metrics.get("price", 0),
+                    "changePercent": metrics.get("change", 0),
+                    "volume": volume,
+                    "rsi": extended["rsi"]["value"],
+                    "rsi_signal": extended["rsi"]["signal"],
+                    "sma20": extended["sma"]["sma20"],
+                    "sma50": extended["sma"]["sma50"],
+                    "sma200": extended["sma"]["sma200"],
+                    "atr": extended["atr"]["value"],
+                    "atr_volatility": extended["atr"]["volatility"],
+                    "macd_crossover": extended["macd"]["crossover"],
+                    "volume_signal": extended["volume"]["signal"],
+                    "bbw": metrics.get("bbw", 0),
+                    "bb_rating": metrics.get("rating", 0),
+                    "bb_signal": metrics.get("signal", "N/A"),
+                }
+                all_stocks.append(stock_data)
+            except Exception:
+                continue
+
+    if not all_stocks:
+        return {"error": f"No data returned for {index_key} constituents", "timeframe": timeframe}
+
+    # Index-level statistics
+    changes = [s["changePercent"] for s in all_stocks]
+    avg_change = sum(changes) / len(changes)
+    advancing = len([c for c in changes if c > 0])
+    declining = len([c for c in changes if c < 0])
+    unchanged = len([c for c in changes if c == 0])
+
+    # Sector breakdown
+    sector_perf = {}
+    for s in all_stocks:
+        sec = s["sector"]
+        if sec not in sector_perf:
+            sector_perf[sec] = {"stocks": 0, "total_change": 0.0}
+        sector_perf[sec]["stocks"] += 1
+        sector_perf[sec]["total_change"] += s["changePercent"]
+
+    sector_summary = []
+    for sec, data in sorted(sector_perf.items(), key=lambda x: x[1]["total_change"] / x[1]["stocks"], reverse=True):
+        sector_summary.append({
+            "sector": sec,
+            "stocks_count": data["stocks"],
+            "avg_change": round(data["total_change"] / data["stocks"], 2),
+        })
+
+    # Sort stocks by change
+    by_change = sorted(all_stocks, key=lambda x: x["changePercent"], reverse=True)
+
+    return {
+        "index": index_key,
+        "index_name": index_info["name"],
+        "description": index_info["description"],
+        "timeframe": timeframe,
+        "index_stats": {
+            "total_constituents": index_info["constituents_count"],
+            "analyzed": len(all_stocks),
+            "avg_change": round(avg_change, 2),
+            "advancing": advancing,
+            "declining": declining,
+            "unchanged": unchanged,
+            "breadth": round(advancing / len(all_stocks) * 100, 1) if all_stocks else 0,
+            "sentiment": "Bullish" if avg_change > 0.5 else "Bearish" if avg_change < -0.5 else "Neutral",
+        },
+        "sector_breakdown": sector_summary,
+        "top_gainers": by_change[:5],
+        "top_losers": by_change[-5:][::-1],
+        "all_stocks": by_change[:limit],
+    }
+
+
+@mcp.tool()
+def multi_timeframe_analysis(
+    symbol: str,
+    exchange: str = "KUCOIN",
+) -> dict:
+    """Multi-timeframe alignment analysis (Weekly -> Daily -> 4H -> 1H -> 15m).
+
+    Analyzes a symbol across all key timeframes to find confluence and optimal
+    entry timing. Best trades happen when Weekly, Daily, and lower timeframes
+    all align in the same direction.
+
+    Args:
+        symbol: Symbol - crypto: "BTCUSDT"; stocks: "COMI" (EGX), "THYAO" (BIST)
+        exchange: Exchange - crypto: KUCOIN, BINANCE; stocks: EGX, BIST, NASDAQ, NYSE
+
+    Returns:
+        Multi-timeframe breakdown with alignment score and trading recommendation.
+    """
+    if not TRADINGVIEW_TA_AVAILABLE:
+        return {"error": "tradingview_ta is missing; run `uv sync`."}
+
+    exchange = sanitize_exchange(exchange, "KUCOIN")
+
+    if ":" not in symbol:
+        full_symbol = f"{exchange.upper()}:{symbol.upper()}"
+    else:
+        full_symbol = symbol.upper()
+
+    screener = EXCHANGE_SCREENER.get(exchange, "crypto")
+
+    # Analyze across timeframes: Weekly, Daily, 4H, 1H, 15m
+    timeframes = ["1W", "1D", "4h", "1h", "15m"]
+    tf_labels = {
+        "1W": "Weekly (Trend Bias)",
+        "1D": "Daily (Swing Setup)",
+        "4h": "4-Hour (Refinement)",
+        "1h": "1-Hour (Entry Timing)",
+        "15m": "15-Min (Execution)",
+    }
+
+    tf_results = {}
+    alignment_scores = []
+
+    for tf in timeframes:
+        try:
+            analysis = get_multiple_analysis(
+                screener=screener,
+                interval=tf,
+                symbols=[full_symbol]
+            )
+
+            if full_symbol not in analysis or analysis[full_symbol] is None:
+                tf_results[tf] = {"error": f"No data for {tf}"}
+                continue
+
+            data = analysis[full_symbol]
+            indicators = data.indicators
+            metrics = compute_metrics(indicators)
+            extended = extract_extended_indicators(indicators)
+            tf_context = analyze_timeframe_context(indicators, tf)
+
+            # Determine bias as numeric: +1 bullish, -1 bearish, 0 neutral
+            bias_num = 0
+            if tf_context["bias"] == "Bullish":
+                bias_num = 1
+            elif tf_context["bias"] == "Bearish":
+                bias_num = -1
+            alignment_scores.append(bias_num)
+
+            tf_results[tf] = {
+                "label": tf_labels.get(tf, tf),
+                "bias": tf_context["bias"],
+                "bias_reasons": tf_context["bias_reasons"],
+                "key_indicators": tf_context["key_indicators_for_timeframe"],
+                "advice": tf_context["advice"],
+                "price": metrics.get("price") if metrics else None,
+                "change_pct": metrics.get("change") if metrics else None,
+                "rsi": extended["rsi"],
+                "macd_crossover": extended["macd"]["crossover"],
+                "ema_trend": {
+                    "ema20": extended["ema"].get("ema20"),
+                    "ema50": extended["ema"].get("ema50"),
+                    "ema200": extended["ema"].get("ema200"),
+                },
+                "volume_signal": extended["volume"]["signal"],
+                "market_structure": extended["market_structure"]["trend"],
+                "trend_strength": extended["market_structure"]["trend_strength"],
+                "momentum_aligned": extended["market_structure"]["momentum_aligned"],
+            }
+
+        except Exception as e:
+            tf_results[tf] = {"error": str(e)}
+
+    # --- Multi-Timeframe Alignment ---
+    total_score = sum(alignment_scores)
+    num_tf = len(alignment_scores)
+    all_bullish = all(s > 0 for s in alignment_scores) if alignment_scores else False
+    all_bearish = all(s < 0 for s in alignment_scores) if alignment_scores else False
+
+    if all_bullish:
+        alignment = "FULLY ALIGNED BULLISH"
+        confidence = "Very High"
+        action = "STRONG BUY - All timeframes bullish. Look for pullback entry on 1H/15m."
+    elif all_bearish:
+        alignment = "FULLY ALIGNED BEARISH"
+        confidence = "Very High"
+        action = "STRONG SELL - All timeframes bearish. Avoid longs."
+    elif total_score >= 3:
+        alignment = "MOSTLY BULLISH"
+        confidence = "High"
+        action = "BUY - Majority of timeframes bullish. Enter on 4H/1H pullback to support."
+    elif total_score <= -3:
+        alignment = "MOSTLY BEARISH"
+        confidence = "High"
+        action = "SELL - Majority of timeframes bearish. Avoid catching the falling knife."
+    elif total_score > 0:
+        alignment = "LEAN BULLISH"
+        confidence = "Medium"
+        action = "CAUTIOUS BUY - Some bullish signals but not fully aligned. Wait for better setup."
+    elif total_score < 0:
+        alignment = "LEAN BEARISH"
+        confidence = "Medium"
+        action = "CAUTIOUS SELL - Some bearish signals. Reduce position or wait."
+    else:
+        alignment = "MIXED/RANGING"
+        confidence = "Low"
+        action = "HOLD/NO TRADE - Timeframes conflict. Wait for alignment."
+
+    # Identify which TF breaks the alignment
+    divergent_tfs = []
+    if num_tf >= 2:
+        higher_tf_bias = alignment_scores[0] if alignment_scores else 0  # Weekly
+        for i, score in enumerate(alignment_scores):
+            if score != 0 and score != higher_tf_bias and higher_tf_bias != 0:
+                divergent_tfs.append(timeframes[i])
+
+    return {
+        "symbol": full_symbol,
+        "exchange": exchange,
+        "analysis_type": "Multi-Timeframe Alignment",
+        "timeframes": tf_results,
+        "alignment": {
+            "status": alignment,
+            "confidence": confidence,
+            "net_score": total_score,
+            "scores_by_tf": dict(zip(timeframes, alignment_scores)),
+            "divergent_timeframes": divergent_tfs,
+        },
+        "recommendation": {
+            "action": action,
+            "entry_timeframe": "1H or 4H pullback" if total_score > 0 else "Wait for alignment",
+            "rules": [
+                "Weekly sets BIAS (direction only, not entries)",
+                "Daily finds SETUP (swing level, confluence)",
+                "4H refines entry zone",
+                "1H/15m triggers entry with tight stop",
+                "Never trade against Weekly + Daily combined direction",
+            ],
+        },
+    }
+
+
+@mcp.tool()
+def egx_stock_screener(
+    timeframe: str = "1D",
+    min_score: int = 55,
+    index_filter: str = "",
+    limit: int = 20
+) -> dict:
+    """Production stock ranking engine for EGX — finds strong stocks with actionable setups.
+
+    Uses a 100-point hybrid model combining:
+      A. Trend & Momentum (50 pts) — EMA structure, RSI, MACD, relative performance
+      B. Confirmation (20 pts) — Volume, ADX trend strength
+      C. Risk-Adjusted Quality (15 pts) — ATR volatility, drawdown stability
+      D. Fundamental Overlay (15 pts) — TradingView recommendation proxy
+
+    Stocks scoring 70+ automatically get trade setups (entry, stop, targets, S/R).
+
+    Args:
+        timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M (default 1D)
+        min_score: Minimum stock score to include (0-100, default 55)
+        index_filter: Filter by index — EGX30, EGX70, EGX100, SHARIAH33,
+                      EGX35LV, TAMAYUZ. Leave empty for all EGX stocks.
+        limit: Number of results (max 50)
+
+    Returns:
+        Ranked stocks with score breakdown. Stocks >=70 include full trade plans.
+    """
+    from tradingview_mcp.core.data.egx_sectors import get_sector, get_currency
+
+    if not TRADINGVIEW_TA_AVAILABLE:
+        return {"error": "tradingview_ta is missing; run `uv sync`."}
+
+    timeframe = sanitize_timeframe(timeframe, "1D")
+    min_score = max(0, min(100, min_score))
+    limit = max(1, min(50, limit))
+
+    # Determine symbols to scan
+    if index_filter:
+        from tradingview_mcp.core.data.egx_indices import EGX_INDICES
+        idx_key = index_filter.strip().upper()
+        if idx_key in EGX_INDICES:
+            symbols = EGX_INDICES[idx_key]["get_symbols"]()
+            source_label = idx_key
+        else:
+            return {
+                "error": f"Unknown index: {index_filter}",
+                "available": list(EGX_INDICES.keys()),
+            }
+    else:
+        symbols = load_symbols("egx")
+        source_label = "All EGX"
+
+    if not symbols:
+        return {"error": "No EGX symbols found."}
+
+    screener = EXCHANGE_SCREENER.get("egx", "egypt")
+
+    # ── Pass 1: Fetch all data and compute change % for cross-sectional ranking ──
+    raw_results = []
+    batch_size = 200
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i + batch_size]
+        try:
+            analysis = get_multiple_analysis(screener=screener, interval=timeframe, symbols=batch)
+        except Exception:
+            continue
+
+        for sym, data in analysis.items():
+            if data is None:
+                continue
+            try:
+                ind = data.indicators
+                o = ind.get("open")
+                c = ind.get("close")
+                if not o or not c or o <= 0:
+                    continue
+                change = ((c - o) / o) * 100
+                raw_results.append((sym, ind, change))
+            except Exception:
+                continue
+
+    if not raw_results:
+        return {"error": "No data returned for EGX stocks", "timeframe": timeframe}
+
+    # ── Compute cross-sectional change percentile ranks ──
+    changes = sorted([r[2] for r in raw_results])
+    n = len(changes)
+
+    def _percentile_rank(val):
+        # Fraction of stocks this stock beats
+        count_below = sum(1 for c in changes if c < val)
+        return count_below / n if n > 0 else 0.5
+
+    # ── Pass 2: Score every stock with cross-sectional context ──
+    scored_stocks = []
+    for sym, ind, change in raw_results:
+        try:
+            pct_rank = _percentile_rank(change)
+            ccy = get_currency(sym)
+            result = compute_stock_score(ind, change_pct_rank=pct_rank, currency=ccy)
+            if not result or result["score"] < min_score:
+                continue
+
+            metrics = compute_metrics(ind)
+            if not metrics:
+                continue
+
+            # Liquidity filter: skip very illiquid stocks
+            vol_sma = ind.get("volume.SMA20")
+            vol = ind.get("volume")
+            liquidity_status = "Pass"
+            if vol_sma and vol_sma < 10000:
+                liquidity_status = "Fail — Very Low"
+                if min_score >= 55:
+                    continue  # Skip illiquid names for non-exploratory scans
+
+            stock_entry = {
+                "symbol": sym,
+                "sector": get_sector(sym),
+                "price": metrics["price"],
+                "stock_score": result["score"],
+                "grade": result["grade"],
+                "trend_state": result["trend_state"],
+                "change_pct": result["change_pct"],
+                "score_breakdown": result["breakdown"],
+                "signals": result["signals"],
+                "penalties": result["penalties"],
+                "liquidity_status": liquidity_status,
+            }
+
+            # ── Layer B+C: Trade setup for stocks scoring 70+ ──
+            if result["score"] >= 70:
+                setup = compute_trade_setup(ind)
+                if setup:
+                    quality = compute_trade_quality(ind, result["score"], setup)
+                    stock_entry["trade_setup"] = {
+                        "setup_types": setup["setup_types"],
+                        "entry_points": setup["entry_points"],
+                        "stop_loss": setup["stop_loss"],
+                        "stop_distance_pct": setup["stop_distance_pct"],
+                        "targets": setup["targets"],
+                        "risk_reward": setup["risk_reward"],
+                        "supports": setup["supports"],
+                        "resistances": setup["resistances"],
+                    }
+                    stock_entry["trade_quality_score"] = quality["trade_quality_score"]
+                    stock_entry["trade_quality"] = quality["quality"]
+                    stock_entry["trade_notes"] = quality["notes"]
+                    stock_entry["trade_quality_breakdown"] = quality["breakdown"]
+
+            scored_stocks.append(stock_entry)
+        except Exception:
+            continue
+
+    # ── Sort: stock score desc, then trade quality desc ──
+    scored_stocks.sort(
+        key=lambda x: (x["stock_score"], x.get("trade_quality_score", 0)),
+        reverse=True,
+    )
+
+    # Grade distribution
+    grades = {}
+    for s in scored_stocks:
+        g = s["grade"]
+        grades[g] = grades.get(g, 0) + 1
+
+    # Separate qualified trades from watchlist
+    qualified = [s for s in scored_stocks if s["stock_score"] >= 70
+                 and s.get("trade_quality_score", 0) >= 65]
+    watchlist = [s for s in scored_stocks if s["stock_score"] < 70
+                 or s.get("trade_quality_score", 0) < 65]
+
+    return {
+        "source": source_label,
+        "timeframe": timeframe,
+        "min_score": min_score,
+        "total_scanned": len(raw_results),
+        "total_passed": len(scored_stocks),
+        "grade_distribution": grades,
+        "qualified_trades": qualified[:limit],
+        "qualified_count": len(qualified),
+        "watchlist": watchlist[:max(5, limit - len(qualified))],
+        "execution_rules": {
+            "trade_threshold": "Stock Score >= 70 AND Trade Quality >= 65",
+            "risk_reward_min": "R:R to Target 2 >= 2.0 preferred",
+            "disclaimer": "For educational/informational purposes only. Not financial advice.",
+        },
+    }
+
+
+@mcp.tool()
+def egx_trade_plan(
+    symbol: str,
+    timeframe: str = "1D"
+) -> dict:
+    """Generate a full trade plan for a specific EGX stock.
+
+    Produces: stock score, score breakdown, entry points (breakout + pullback),
+    stop-loss, targets, risk/reward, nearest 3 supports, nearest 3 resistances,
+    trade quality score, and actionable notes.
+
+    Args:
+        symbol: EGX stock symbol (e.g., "COMI", "TMGH", "FWRY")
+        timeframe: One of 5m, 15m, 1h, 4h, 1D, 1W, 1M (default 1D)
+
+    Returns:
+        Complete trade plan with score, setup, risk controls, and S/R levels.
+    """
+    from tradingview_mcp.core.data.egx_sectors import get_sector, get_currency
+
+    if not TRADINGVIEW_TA_AVAILABLE:
+        return {"error": "tradingview_ta is missing; run `uv sync`."}
+
+    timeframe = sanitize_timeframe(timeframe, "1D")
+
+    if ":" not in symbol:
+        full_symbol = f"EGX:{symbol.upper()}"
+    else:
+        full_symbol = symbol.upper()
+
+    screener = EXCHANGE_SCREENER.get("egx", "egypt")
+
+    try:
+        analysis = get_multiple_analysis(
+            screener=screener, interval=timeframe, symbols=[full_symbol]
+        )
+    except Exception as e:
+        return {"error": f"Analysis failed: {str(e)}"}
+
+    if full_symbol not in analysis or analysis[full_symbol] is None:
+        return {"error": f"No data found for {full_symbol}"}
+
+    ind = analysis[full_symbol].indicators
+    metrics = compute_metrics(ind)
+    if not metrics:
+        return {"error": f"Could not compute metrics for {full_symbol}"}
+
+    # Layer A: Stock Score
+    ccy = get_currency(full_symbol)
+    score_result = compute_stock_score(ind, currency=ccy)
+    if not score_result:
+        return {"error": f"Could not compute stock score for {full_symbol}"}
+
+    # Layer B: Trade Setup
+    setup = compute_trade_setup(ind)
+
+    # Layer C: Trade Quality
+    quality = None
+    if setup:
+        quality = compute_trade_quality(ind, score_result["score"], setup)
+
+    # Extended indicators for context
+    extended = extract_extended_indicators(ind)
+
+    # Build output
+    output = {
+        "symbol": full_symbol,
+        "sector": get_sector(full_symbol),
+        "currency": ccy,
+        "timeframe": timeframe,
+        "price": metrics["price"],
+        "change_pct": score_result["change_pct"],
+        "stock_score": score_result["score"],
+        "grade": score_result["grade"],
+        "trend_state": score_result["trend_state"],
+        "score_breakdown": score_result["breakdown"],
+        "signals": score_result["signals"],
+        "penalties": score_result["penalties"],
+        "liquidity": score_result.get("liquidity", {}),
+        "rsi": extended["rsi"],
+        "macd": extended["macd"],
+        "adx": extended["adx"],
+        "volume": extended["volume"],
+        "ema": extended["ema"],
+        "bollinger_bands": extended["bollinger_bands"],
+        "tv_recommendation": extended["tv_recommendation"],
+    }
+
+    if setup:
+        output["trade_setup"] = {
+            "setup_types": setup["setup_types"],
+            "entry_points": setup["entry_points"],
+            "stop_loss": setup["stop_loss"],
+            "stop_distance_pct": setup["stop_distance_pct"],
+            "targets": setup["targets"],
+            "risk_reward": setup["risk_reward"],
+            "supports": setup["supports"],
+            "resistances": setup["resistances"],
+        }
+
+    if quality:
+        output["trade_quality_score"] = quality["trade_quality_score"]
+        output["trade_quality"] = quality["quality"]
+        output["trade_quality_breakdown"] = quality["breakdown"]
+        output["trade_notes"] = quality["notes"]
+
+    # Execution recommendation
+    ss = score_result["score"]
+    tq = quality["trade_quality_score"] if quality else 0
+    rr2 = setup["risk_reward"]["to_target_2"] if setup else 0
+
+    if ss >= 70 and tq >= 65 and rr2 and rr2 >= 2.0:
+        recommendation = "QUALIFIED — Strong stock with actionable setup"
+    elif ss >= 70 and tq >= 50:
+        recommendation = "CONDITIONAL — Good stock but setup needs improvement"
+    elif ss >= 55:
+        recommendation = "WATCHLIST — Monitor for better entry"
+    else:
+        recommendation = "AVOID — Does not meet momentum/quality criteria"
+
+    output["recommendation"] = recommendation
+    output["disclaimer"] = "For educational/informational purposes only. Not financial advice."
+
+    return output
+
+
+@mcp.tool()
+def egx_fibonacci_retracement(
+    symbol: str,
+    lookback: str = "52W",
+    timeframe: str = "1D"
+) -> dict:
+    """Fibonacci retracement analysis for EGX stocks — identifies key support/resistance
+    levels at standard Fibonacci ratios (23.6%, 38.2%, 50%, 61.8%, 78.6%).
+
+    Calculates retracement and extension levels from the period swing high/low,
+    detects trend direction, and shows where the current price sits relative to
+    key Fibonacci zones (golden pocket, 50% retracement, etc.).
+
+    Args:
+        symbol: EGX stock symbol (e.g., "COMI", "TMGH", "FWRY")
+        lookback: Period for swing high/low detection — "1M", "3M", "6M", "52W", "ALL" (default 52W)
+        timeframe: Analysis timeframe for current indicators — 5m, 15m, 1h, 4h, 1D, 1W, 1M (default 1D)
+
+    Returns:
+        Fibonacci retracement & extension levels, price position analysis, key zones, and context.
+    """
+    from tradingview_mcp.core.data.egx_sectors import get_sector, get_currency
+
+    if not TRADINGVIEW_TA_AVAILABLE:
+        return {"error": "tradingview_ta is missing; run `uv sync`."}
+
+    timeframe = sanitize_timeframe(timeframe, "1D")
+    lookback = lookback.strip().upper()
+    valid_lookbacks = {"1M", "3M", "6M", "52W", "ALL"}
+    if lookback not in valid_lookbacks:
+        return {"error": f"Invalid lookback: {lookback}", "valid": sorted(valid_lookbacks)}
+
+    if ":" not in symbol:
+        full_symbol = f"EGX:{symbol.upper()}"
+    else:
+        full_symbol = symbol.upper()
+
+    screener = EXCHANGE_SCREENER.get("egx", "egypt")
+
+    # ── Step 1: Get period high/low via tradingview_screener ──────────────
+    swing_high = None
+    swing_low = None
+    swing_source = None
+
+    LOOKBACK_COLUMNS = {
+        "1M":  ("High.1M", "Low.1M"),
+        "3M":  ("High.3M", "Low.3M"),
+        "6M":  ("High.6M", "Low.6M"),
+        "52W": ("price_52_week_high", "price_52_week_low"),
+        "ALL": ("High.All", "Low.All"),
+    }
+
+    if TRADINGVIEW_SCREENER_AVAILABLE:
+        try:
+            high_col, low_col = LOOKBACK_COLUMNS[lookback]
+            q = (
+                Query()
+                .set_markets("egypt")
+                .select("close", high_col, low_col)
+                .set_tickers([full_symbol])
+            )
+            _, df = q.get_scanner_data()
+            if not df.empty:
+                row = df.iloc[0]
+                h = row.get(high_col)
+                l = row.get(low_col)
+                if h is not None and l is not None and h > l:
+                    swing_high = float(h)
+                    swing_low = float(l)
+                    swing_source = f"screener ({lookback} period high/low)"
+        except Exception:
+            pass  # Fall through to fallback
+
+    # ── Step 2: Get current indicators via tradingview_ta ─────────────────
+    try:
+        analysis = get_multiple_analysis(
+            screener=screener, interval=timeframe, symbols=[full_symbol]
+        )
+    except Exception as e:
+        return {"error": f"Analysis failed: {str(e)}"}
+
+    if full_symbol not in analysis or analysis[full_symbol] is None:
+        return {"error": f"No data found for {full_symbol}"}
+
+    ind = analysis[full_symbol].indicators
+    close = ind.get("close")
+    if not close:
+        return {"error": f"No price data for {full_symbol}"}
+
+    # ── Fallback: Use Fibonacci pivot R3/S3 as swing proxies ──────────────
+    if swing_high is None or swing_low is None:
+        fib_r3 = ind.get("Pivot.M.Fibonacci.R3")
+        fib_s3 = ind.get("Pivot.M.Fibonacci.S3")
+        classic_r3 = ind.get("Pivot.M.Classic.R3")
+        classic_s3 = ind.get("Pivot.M.Classic.S3")
+
+        h_candidate = fib_r3 or classic_r3
+        l_candidate = fib_s3 or classic_s3
+
+        if h_candidate and l_candidate and h_candidate > l_candidate:
+            swing_high = float(h_candidate)
+            swing_low = float(l_candidate)
+            swing_source = "pivot points (R3/S3 fallback)"
+        else:
+            return {
+                "error": "Could not determine swing high/low for Fibonacci calculation",
+                "hint": "Period high/low data not available for this symbol",
+            }
+
+    # Validate range
+    swing_range_pct = ((swing_high - swing_low) / swing_low) * 100
+    if swing_range_pct < 2:
+        return {
+            "error": f"Swing range too narrow ({swing_range_pct:.1f}%) for meaningful Fibonacci levels",
+            "swing_high": round(swing_high, 2),
+            "swing_low": round(swing_low, 2),
+        }
+
+    # ── Step 3: Compute Fibonacci ─────────────────────────────────────────
+    ema50 = ind.get("EMA50")
+    ema200 = ind.get("EMA200")
+    trend, trend_reasoning = detect_trend_for_fibonacci(
+        close, swing_high, swing_low, ema50, ema200
+    )
+
+    fib_levels = compute_fibonacci_levels(swing_high, swing_low, trend)
+    position = analyze_fibonacci_position(close, fib_levels)
+
+    # ── Step 4: Context indicators ────────────────────────────────────────
+    rsi_val = ind.get("RSI")
+    atr_val = ind.get("ATR")
+    vol = ind.get("volume")
+    vol_sma = ind.get("volume.SMA20")
+    vol_ratio = round(vol / vol_sma, 2) if vol and vol_sma and vol_sma > 0 else None
+
+    metrics = compute_metrics(ind)
+    change_pct = round(((close - ind.get("open", close)) / ind.get("open", close)) * 100, 2) if ind.get("open") else None
+
+    # ── Step 5: Build interpretation ──────────────────────────────────────
+    interp_parts = []
+    interp_parts.append(
+        f"Price is at {position['retracement_depth_pct']}% retracement of the {trend}."
+    )
+    if position["key_zone"]:
+        interp_parts.append(f"Currently in {position['key_zone']}.")
+    if position["fib_supports"]:
+        nearest_s = position["fib_supports"][0]
+        interp_parts.append(f"Key Fib support at {nearest_s['price']} ({nearest_s['ratio']}).")
+    if position["fib_resistances"]:
+        nearest_r = position["fib_resistances"][0]
+        interp_parts.append(f"Key Fib resistance at {nearest_r['price']} ({nearest_r['ratio']}).")
+
+    return {
+        "symbol": full_symbol,
+        "sector": get_sector(full_symbol),
+        "timeframe": timeframe,
+        "lookback_period": lookback,
+        "price": round(close, 2),
+        "change_pct": change_pct,
+        "swing_high": round(swing_high, 2),
+        "swing_low": round(swing_low, 2),
+        "swing_range_pct": round(swing_range_pct, 1),
+        "swing_source": swing_source,
+        "trend": trend,
+        "trend_reasoning": trend_reasoning,
+        "retracement_levels": fib_levels["retracement_levels"],
+        "extension_levels": fib_levels["extension_levels"],
+        "price_position": position,
+        "context": {
+            "rsi": round(rsi_val, 1) if rsi_val else None,
+            "ema50": round(ema50, 2) if ema50 else None,
+            "ema200": round(ema200, 2) if ema200 else None,
+            "atr": round(atr_val, 2) if atr_val else None,
+            "volume_ratio": vol_ratio,
+        },
+        "interpretation": " ".join(interp_parts),
+        "disclaimer": "For educational/informational purposes only. Not financial advice.",
+    }
+
+
+def _safe_round(value, decimals: int = 4):
+    """Module-level safe round for server.py usage."""
+    if value is None:
+        return None
+    try:
+        return round(float(value), decimals)
+    except (TypeError, ValueError):
+        return None
 
 
 if __name__ == "__main__":

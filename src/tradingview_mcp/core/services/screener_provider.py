@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import List, Dict, Any, Optional
+from ..utils.validators import get_market_type
 
 
 def _tf_to_tv_resolution(tf: Optional[str]) -> Optional[str]:
@@ -48,7 +49,7 @@ def fetch_screener_indicators(
     except Exception as e:
         raise ImportError("tradingview-screener is not installed. Please add it to requirements.txt and install.") from e
 
-    market = 'crypto'
+    market = get_market_type(exchange) if exchange else 'crypto'
     base_cols = ['open', 'close', 'SMA20', 'BB.upper', 'BB.lower', 'EMA50', 'RSI', 'volume']
 
     suffix = _tf_to_tv_resolution(timeframe)
@@ -160,7 +161,8 @@ def fetch_screener_multi_changes(
         if c not in seen:
             cols.append(c); seen.add(c)
 
-    q = Query().set_markets('crypto').select(*cols)
+    market = get_market_type(exchange) if exchange else 'crypto'
+    q = Query().set_markets(market).select(*cols)
 
     exchange_code = (exchange or '').upper()
     if symbols:

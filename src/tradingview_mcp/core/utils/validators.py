@@ -3,6 +3,10 @@ import os
 from typing import Set
 
 ALLOWED_TIMEFRAMES: Set[str] = {"5m", "15m", "1h", "4h", "1D", "1W", "1M"}
+
+# Exchanges that represent stock markets (not crypto)
+STOCK_EXCHANGES: Set[str] = {"egx", "bist", "nasdaq", "nyse", "bursa", "myx", "klse", "ace", "leap", "hkex", "hk", "hsi"}
+
 EXCHANGE_SCREENER = {
     "all": "crypto",
     "huobi": "crypto",
@@ -15,6 +19,8 @@ EXCHANGE_SCREENER = {
     "bybit": "crypto",
     "okx": "crypto",
     "bist": "turkey",
+    # Egyptian Stock Market Support
+    "egx": "egypt",
     "nasdaq": "america",
     # Malaysia Stock Market Support
     "bursa": "malaysia",
@@ -51,3 +57,13 @@ def sanitize_exchange(ex: str, default: str = "kucoin") -> str:
         return default
     exs = ex.strip().lower()
     return exs if exs in EXCHANGE_SCREENER else default
+
+
+def is_stock_exchange(exchange: str) -> bool:
+    """Return True if the exchange is a stock market (not crypto)."""
+    return exchange.strip().lower() in STOCK_EXCHANGES
+
+
+def get_market_type(exchange: str) -> str:
+    """Return the TradingView market type for screener queries."""
+    return EXCHANGE_SCREENER.get(exchange.strip().lower(), "crypto")
