@@ -5,7 +5,7 @@ from typing import Set
 ALLOWED_TIMEFRAMES: Set[str] = {"5m", "15m", "1h", "4h", "1D", "1W", "1M"}
 
 # Exchanges that represent stock markets (not crypto)
-STOCK_EXCHANGES: Set[str] = {"egx", "bist", "nasdaq", "nyse", "bursa", "myx", "klse", "ace", "leap", "hkex", "hk", "hsi"}
+STOCK_EXCHANGES: Set[str] = {"egx", "bist", "nasdaq", "nyse", "bursa", "myx", "klse", "ace", "leap", "hkex", "hk", "hsi", "asx"}
 
 EXCHANGE_SCREENER = {
     "all": "crypto",
@@ -33,6 +33,7 @@ EXCHANGE_SCREENER = {
     "hk": "hongkong",       # Hong Kong (alternate)
     "hsi": "hongkong",      # Hang Seng Index constituents
     "nyse": "america",
+    "asx": "australia",     # Australian Securities Exchange
 }
 
 # Get absolute path to coinlist directory relative to this module
