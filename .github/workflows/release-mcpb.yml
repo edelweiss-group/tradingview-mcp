@@ -1,0 +1,76 @@
+name: Release MCPB Bundle
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  bundle:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v5
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "lts/*"
+
+      - name: Determine bundle version
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME:-}" == v* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            VERSION="$(python3 - <<'PY'
+import re
+from pathlib import Path
+
+match = re.search(r'^version\s*=\s*"([^"]+)"', Path("pyproject.toml").read_text(), re.M)
+if not match:
+    raise SystemExit("Could not determine version from pyproject.toml")
+print(match.group(1))
+PY
+)"
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+
+      - name: Build MCPB artifact
+        run: ./scripts/build_mcpb.sh
+
+      - name: Generate registry server.json
+        if: github.ref_type == 'tag'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARTIFACT="tradingview-mcp-${VERSION}.mcpb"
+          SHA256="$(cat "dist/${ARTIFACT}.sha256")"
+          ARTIFACT_URL="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/download/${GITHUB_REF_NAME}/${ARTIFACT}"
+
+          python3 scripts/generate_server_json.py \
+            --version "$VERSION" \
+            --artifact-url "$ARTIFACT_URL" \
+            --sha256 "$SHA256" \
+            --output dist/server.json
+
+      - name: Upload bundle artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tradingview-mcp-bundle-${{ env.VERSION }}
+          path: dist/*
+
+      - name: Publish release assets
+        if: github.ref_type == 'tag'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/tradingview-mcp-${{ env.VERSION }}.mcpb
+            dist/tradingview-mcp-${{ env.VERSION }}.mcpb.sha256
+            dist/server.json
