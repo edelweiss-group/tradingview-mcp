@@ -29,16 +29,7 @@ jobs:
           if [[ "${GITHUB_REF_TYPE:-}" == "tag" && "${GITHUB_REF_NAME:-}" == v* ]]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
-            VERSION="$(python3 - <<'PY'
-import re
-from pathlib import Path
-
-match = re.search(r'^version\s*=\s*"([^"]+)"', Path("pyproject.toml").read_text(), re.M)
-if not match:
-    raise SystemExit("Could not determine version from pyproject.toml")
-print(match.group(1))
-PY
-)"
+            VERSION="$(python3 -c 'import re, pathlib; m = re.search(r"^version\s*=\s*\"([^\"]+)\"", pathlib.Path("pyproject.toml").read_text(), re.M); print(m.group(1)) if m else exit(1)')"
           fi
           echo "VERSION=$VERSION" >> "$GITHUB_ENV"
 
