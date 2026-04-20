@@ -54,7 +54,8 @@ https://github-production-user-asset-6210df.s3.amazonaws.com/67838093/478689497-
 
 ## 🚀 Quick Start (5 Minutes)
 
-### Install via pip
+### Option 1: Docker
+
 ```bash
 docker run -p 8080:8000 atilaahmet/tradingview-mcp:latest
 ```
@@ -72,7 +73,7 @@ uv tool install tradingview-mcp-server
 pip install tradingview-mcp-server
 ```
 
-### Claude Desktop Config (`claude_desktop_config.json`)
+#### Claude Desktop Config (`claude_desktop_config.json`)
 
 > **Note:** On macOS, GUI apps like Claude Desktop may not have `~/.local/bin` in their PATH. Use the full path to `uvx` to avoid "command not found" errors.
 
@@ -89,12 +90,14 @@ pip install tradingview-mcp-server
 
 On Linux, replace `/Users/YOUR_USERNAME` with `/home/YOUR_USERNAME`. On Windows, use `%USERPROFILE%\.local\bin\uvx.exe`.
 
-### Or run from source
+#### Or run from source
 ```bash
 git clone https://github.com/atilaahmettaner/tradingview-mcp
 cd tradingview-mcp
 uv run tradingview-mcp
-### Option 3: MCP Bundle (.mcpb)
+```
+
+### ⭐ Option 3: MCP Bundle (.mcpb) [RECOMMENDED]
 
 For MCP clients that support bundles, download the latest `.mcpb` file from GitHub Releases and open it directly.
 
@@ -110,7 +113,6 @@ This bundle uses the experimental MCPB `uv` runtime, so compatible clients can i
 
 2. **Claude Desktop Configuration:**
    ```json
-
    {
      "mcpServers": {
        "tradingview-mcp": {
