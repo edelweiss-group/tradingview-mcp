@@ -1,0 +1,81 @@
+{
+  "manifest_version": "0.4",
+  "name": "tradingview-mcp",
+  "display_name": "TradingView MCP",
+  "version": "0.3.0",
+  "description": "Advanced multi-agent AI trading framework and real-time market analysis MCP server",
+  "author": {
+    "name": "Atila Ahmettaner",
+    "url": "https://github.com/atilaahmettaner"
+  },
+  "server": {
+    "type": "uv",
+    "entry_point": "src/tradingview_mcp/server.py",
+    "mcp_config": {
+      "command": "uv",
+      "args": ["--directory", "${__dirname}", "run", "tradingview-mcp"],
+      "env": {}
+    }
+  },
+  "compatibility": {
+    "platforms": ["darwin", "linux", "win32"],
+    "runtimes": {
+      "python": ">=3.10"
+    }
+  },
+  "keywords": [
+    "mcp",
+    "tradingview",
+    "crypto",
+    "technical-analysis",
+    "screener",
+    "agents"
+  ],
+  "tools": [
+    {
+      "name": "top_gainers",
+      "description": "Return the top gainers for an exchange and timeframe."
+    },
+    {
+      "name": "top_losers",
+      "description": "Return the top losers for an exchange and timeframe."
+    },
+    {
+      "name": "bollinger_scan",
+      "description": "Scan for assets with low Bollinger Band Width squeeze conditions."
+    },
+    {
+      "name": "rating_filter",
+      "description": "Filter assets by Bollinger Band rating from -3 to +3."
+    },
+    {
+      "name": "coin_analysis",
+      "description": "Get a detailed technical analysis for a specific symbol."
+    },
+    {
+      "name": "consecutive_candles_scan",
+      "description": "Scan for bullish or bearish consecutive candle patterns."
+    },
+    {
+      "name": "advanced_candle_pattern",
+      "description": "Analyze progressive candle-size patterns across multiple timeframes."
+    },
+    {
+      "name": "volume_breakout_scanner",
+      "description": "Detect price moves confirmed by abnormal volume breakouts."
+    },
+    {
+      "name": "volume_confirmation_analysis",
+      "description": "Run detailed volume confirmation analysis for one symbol."
+    },
+    {
+      "name": "smart_volume_scanner",
+      "description": "Combine volume, price action, and RSI filters into a scanner."
+    },
+    {
+      "name": "multi_agent_analysis",
+      "description": "Run the multi-agent technical, sentiment, and risk debate for one symbol."
+    }
+  ],
+  "license": "MIT"
+}

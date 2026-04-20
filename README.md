@@ -56,6 +56,19 @@ https://github-production-user-asset-6210df.s3.amazonaws.com/67838093/478689497-
 
 ### Install via pip
 ```bash
+docker run -p 8080:8000 atilaahmet/tradingview-mcp:latest
+```
+
+**Remote MCP URL:** `http://localhost:8080/mcp`
+
+Use this URL in clients that support remote MCP servers over Streamable HTTP.
+
+### Option 2: Python / PyPI
+
+Install the package directly:
+```bash
+uv tool install tradingview-mcp-server
+# or standard pip:
 pip install tradingview-mcp-server
 ```
 
@@ -81,6 +94,94 @@ On Linux, replace `/Users/YOUR_USERNAME` with `/home/YOUR_USERNAME`. On Windows,
 git clone https://github.com/atilaahmettaner/tradingview-mcp
 cd tradingview-mcp
 uv run tradingview-mcp
+### Option 3: MCP Bundle (.mcpb)
+
+For MCP clients that support bundles, download the latest `.mcpb` file from GitHub Releases and open it directly.
+
+This bundle uses the experimental MCPB `uv` runtime, so compatible clients can install the Python dependencies without requiring a separate local Python setup.
+
+### Option 4: Direct Git Execution (No Installation)
+
+1. **Install UV Package Manager:**
+   ```bash
+   brew install uv  # macOS
+   curl -LsSf https://astral.sh/uv/install.sh | sh  # Linux
+   ```
+
+2. **Claude Desktop Configuration:**
+   ```json
+
+   {
+     "mcpServers": {
+       "tradingview-mcp": {
+         "command": "uv",
+         "args": [
+           "tool", "run", "--from",
+           "git+https://github.com/atilaahmettaner/tradingview-mcp.git",
+           "tradingview-mcp"
+         ]
+       }
+     }
+   }
+   ```
+
+3. **Restart Claude Desktop** - The framework is now loaded and your AI Analyst firm is ready!
+
+📋 **For detailed Windows or Manual Local Installation instructions, see [INSTALLATION.md](INSTALLATION.md)**
+
+### Building the MCP Bundle Locally
+
+Validate and pack the bundle from the repository root:
+
+```bash
+./scripts/build_mcpb.sh
+```
+
+This creates:
+
+- `dist/tradingview-mcp-<version>.mcpb`
+- `dist/tradingview-mcp-<version>.mcpb.sha256`
+- `dist/server.json` when built in CI from a tag
+
+---
+
+## 🛠️ Framework Capabilities
+
+### 🧠 Multi-Agent Analysis
+| Tool | Description | Example Usage |
+|------|-------------|---------------|
+| `multi_agent_analysis` | Runs the full 3-agent debate for a final trading decision | "Run a multi-agent analysis on BTC on Binance" |
+| `coin_analysis` | Raw deep-dive for manual technical analysis | "Analyze IBM stock on NYSE with technical indicators" |
+
+### 📈 Real-Time Market Screening
+| Tool | Description | Example Usage |
+|------|-------------|---------------|
+| `top_gainers` | Find highest performing assets | "Top crypto gainers in 15m" |
+| `top_losers` | Find biggest declining assets | "Worst performing stocks today" |
+| `bollinger_scan` | Find assets with tight Bollinger Bands (breakout prep) | "Coins ready for breakout" |
+| `rating_filter` | Filter by Bollinger Band rating (-3 to +3) | "Strong buy signals (rating +2)" |
+
+### 🕯️ Pattern Recognition  
+| Tool | Description | Example Usage |
+|------|-------------|---------------|
+| `consecutive_candles_scan` | Find consecutive bullish/bearish patterns | "Scan for 3+ consecutive green candles" |
+| `advanced_candle_pattern` | Multi-timeframe pattern analysis | "Complex pattern detection" |
+
+---
+
+## 📝 Talk to Your AI Like a Portfolio Manager
+
+**Run the Agent Debate:**
+```text
+"Run a multi-agent analysis on ETH with a 4h timeframe on KuCoin and tell me the final decision"
+"Deploy the analyst team to check AAPL stock. I need the Technical, Sentiment, and Risk breakdown."
+```
+
+**Advanced Market Queries:**
+```text
+"Show me the top 10 crypto gainers on Binance in the last 15 minutes that have a low risk profile"
+"Which Turkish stocks (BIST) are down more than 5% today?"
+"Find crypto coins with a Bollinger Band squeeze (BBW < 0.05) ready to break out"
 ```
 
 ---
