@@ -14,7 +14,15 @@ _TIMEFRAME_ALIASES = {
 }
 
 # Exchanges that represent stock markets (not crypto)
-STOCK_EXCHANGES: Set[str] = {"egx", "bist", "nasdaq", "nyse", "bursa", "myx", "klse", "ace", "leap", "hkex", "hk", "hsi", "asx", "sse", "szse", "chn"}
+STOCK_EXCHANGES: Set[str] = {
+    "egx", "bist", "nasdaq", "nyse",
+    "amex", "nysearca", "pcx",          # NYSE Arca / AMEX (ETFs: GDX, GLD, XLE, SPY, QQQ, etc.)
+    "bursa", "myx", "klse", "ace", "leap",
+    "hkex", "hk", "hsi",
+    "asx",
+    "sse", "szse", "chn",
+    "twse", "tpex",
+}
 
 EXCHANGE_SCREENER = {
     "all": "crypto",
@@ -43,12 +51,88 @@ EXCHANGE_SCREENER = {
     "hk": "hongkong",       # Hong Kong (alternate)
     "hsi": "hongkong",      # Hang Seng Index constituents
     "nyse": "america",
+    # NYSE Arca / AMEX — ETFs (GDX, GLD, XLE, SPY, QQQ …) are listed here in TradingView
+    "amex": "america",      # TradingView canonical prefix for NYSE Arca ETFs
+    "nysearca": "america",  # alias: NYSE Arca (official name used by issuers)
+    "pcx": "america",       # alias: Pacific Exchange (historical MIC code for NYSE Arca)
     "asx": "australia",     # Australian Securities Exchange
     # China A-Share Market Support
     "sse": "china",         # Shanghai Stock Exchange (上海证券交易所)
     "szse": "china",        # Shenzhen Stock Exchange (深圳证券交易所)
     "chn": "china",         # China A-shares (combined alias)
+    # Taiwan Stock Market Support
+    "twse": "taiwan",       # Taiwan Stock Exchange (臺灣證券交易所)
+    "tpex": "taiwan",       # Taipei Exchange (櫃買中心, OTC market)
 }
+
+# Map validated exchange identifiers to their canonical TradingView symbol prefix.
+# TradingView uses "AMEX" as the prefix for all NYSE Arca / ETF listings; passing
+# "NYSE:GDX" returns no data even though GDX trades on NYSE Arca.
+_EXCHANGE_TV_PREFIX: dict = {
+    "amex": "AMEX",
+    "nysearca": "AMEX",
+    "pcx": "AMEX",
+    "nasdaq": "NASDAQ",
+    "nyse": "NYSE",
+    "egx": "EGX",
+    "bist": "BIST",
+    "bursa": "MYX",
+    "myx": "MYX",
+    "klse": "MYX",
+    "ace": "MYX",
+    "leap": "MYX",
+    "hkex": "HKEX",
+    "hk": "HKEX",
+    "hsi": "HSI",
+    "asx": "ASX",
+    "sse": "SSE",
+    "szse": "SZSE",
+    "chn": "SSE",
+    "twse": "TWSE",
+    "tpex": "TPEX",
+}
+
+_YAHOO_SYMBOL_ALIASES: dict = {
+    "TAIEX": "^TWII",
+    "TAIEX.TW": "^TWII",
+    "^TWII": "^TWII",
+    "TWSE:TAIEX": "^TWII",
+    "TWSE:IX0001": "^TWII",
+}
+
+_TRADINGVIEW_SYMBOL_ALIASES: dict = {
+    "TAIEX": "TWSE:IX0001",
+    "TAIEX.TW": "TWSE:IX0001",
+    "^TWII": "TWSE:IX0001",
+    "IX0001": "TWSE:IX0001",
+    "TWSE:TAIEX": "TWSE:IX0001",
+    "TWSE:IX0001": "TWSE:IX0001",
+}
+
+
+def get_tv_exchange_prefix(exchange: str) -> str:
+    """Return the TradingView symbol prefix for *exchange* (e.g. ``AMEX`` for ``nysearca``).
+
+    Falls back to ``exchange.upper()`` for exchanges not in the explicit map so
+    that crypto exchanges (KUCOIN, BINANCE, …) still work as before.
+    """
+    return _EXCHANGE_TV_PREFIX.get(exchange.strip().lower(), exchange.upper())
+
+
+def normalize_yahoo_symbol(symbol: str) -> str:
+    """Return a provider-specific Yahoo Finance symbol for common user aliases."""
+    raw = (symbol or "").strip().upper()
+    return _YAHOO_SYMBOL_ALIASES.get(raw, raw)
+
+
+def normalize_tradingview_symbol(symbol: str, exchange: str) -> str:
+    """Return a fully-qualified TradingView symbol, resolving common index aliases."""
+    raw = (symbol or "").strip().upper()
+    if raw in _TRADINGVIEW_SYMBOL_ALIASES:
+        return _TRADINGVIEW_SYMBOL_ALIASES[raw]
+    if ":" in raw:
+        return raw
+    return f"{get_tv_exchange_prefix(exchange)}:{raw}"
 
 # Get absolute path to coinlist directory relative to this module
 # This file is at: src/tradingview_mcp/core/utils/validators.py
