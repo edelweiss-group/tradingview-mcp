@@ -128,6 +128,16 @@ uv run tradingview-mcp
 
 For MCP clients that support bundles, download the latest `.mcpb` file from GitHub Releases and open it directly.
 
+**Building the MCP Bundle Locally**
+To build the bundle from source, validate and pack it from the repository root:
+```bash
+./scripts/build_mcpb.sh
+```
+This creates:
+- `dist/tradingview-mcp-<version>.mcpb`
+- `dist/tradingview-mcp-<version>.mcpb.sha256`
+- `dist/server.json` when built in CI from a tag
+
 This bundle uses the experimental MCPB `uv` runtime, so compatible clients can install the Python dependencies without requiring a separate local Python setup.
 
 ### Option 4: Direct Git Execution (No Installation)
@@ -157,20 +167,6 @@ This bundle uses the experimental MCPB `uv` runtime, so compatible clients can i
 3. **Restart Claude Desktop** - The framework is now loaded and your AI Analyst firm is ready!
 
 📋 **For detailed Windows or Manual Local Installation instructions, see [INSTALLATION.md](INSTALLATION.md)**
-
-### Building the MCP Bundle Locally
-
-Validate and pack the bundle from the repository root:
-
-```bash
-./scripts/build_mcpb.sh
-```
-
-This creates:
-
-- `dist/tradingview-mcp-<version>.mcpb`
-- `dist/tradingview-mcp-<version>.mcpb.sha256`
-- `dist/server.json` when built in CI from a tag
 
 ---
 
